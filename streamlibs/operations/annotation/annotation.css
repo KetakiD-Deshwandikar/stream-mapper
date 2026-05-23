@@ -2414,7 +2414,8 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     outline-offset: 2px;
   }
 
-  .annotation-mode .stream-annotation-page-metadata {
+  .annotation-mode .stream-annotation-page-metadata,
+  .annotation-mode .stream-annotation-card-metadata {
     width: 100%;
     border-top: 2px dashed #ababab;
     margin-top: 10px;
@@ -2427,7 +2428,8 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     padding-bottom: 50px;
   }
 
-  .annotation-mode .stream-annotation-page-metadata h3 {
+  .annotation-mode .stream-annotation-page-metadata h3,
+  .annotation-mode .stream-annotation-card-metadata h3 {
     display: flex;
     align-items: start;
     width: 80%;
@@ -2435,23 +2437,27 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     color: #1d4ed8;
   }
 
-  .annotation-mode .page-metadata {
+  .annotation-mode .page-metadata,
+  .annotation-mode .stream-card-metadata-editor {
     width: 80%;
     display: flex;
     flex-wrap: wrap;
   }
 
-  .annotation-mode .page-metadata > div {
+  .annotation-mode .page-metadata > div,
+  .annotation-mode .stream-card-metadata-editor > div {
     display: flex;
     width: 100%;
     box-sizing: border-box;
   }
 
-  .annotation-mode .page-metadata > div > div:first-child {
+  .annotation-mode .page-metadata > div > div:first-child,
+  .annotation-mode .stream-card-metadata-editor > div > div:first-child {
     font-weight: bold;
   }
 
-  .annotation-mode .page-metadata > div > div {
+  .annotation-mode .page-metadata > div > div,
+  .annotation-mode .stream-card-metadata-editor > div > div {
     flex: 1 1 0;
     min-width: 0;
     border: 0.5px solid #cacaca;
@@ -2459,7 +2465,8 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     padding-left: 20px;
   }
 
-  .annotation-mode .page-metadata > div > div img {
+  .annotation-mode .page-metadata > div > div img,
+  .annotation-mode .stream-card-metadata-editor > div > div img {
     width: 100px;
     height: auto;
     max-width: 100px;
@@ -2493,7 +2500,8 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     color: #fff;
   }
 
-  .page-metadata .annotation-asset-pending-badge {
+  .page-metadata .annotation-asset-pending-badge,
+  .stream-card-metadata-editor .annotation-asset-pending-badge {
     display: none;
   }
 

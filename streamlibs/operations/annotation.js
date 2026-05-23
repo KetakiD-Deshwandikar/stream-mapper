@@ -55,6 +55,8 @@ assetsPanel.setOnAssetsChanged(() => {
 
 let cachedCleanHtml = '';
 let cachedPageMetadataHtml = null;
+/** In-memory card (CaaS) metadata table rows between annotation sessions (DA source only). */
+let cachedCardMetadataHtml = null;
 const regenReplacements = [];
 
 // ── Preview DOM helpers (annotationOperation only) ───────────────────────────
@@ -102,6 +104,18 @@ async function initializePreview() {
     ? htmlDom.innerHTML
     : htmlDom;
   document.body.append(metadataEle);
+  if (window.streamConfig?.source === 'da') {
+    const cardMetadataEle = document.createElement('div');
+    cardMetadataEle.classList.add('stream-card-metadata-editor');
+    if (cachedCardMetadataHtml !== null) {
+      cardMetadataEle.innerHTML = cachedCardMetadataHtml;
+    } else {
+      htmlDom.querySelectorAll('div.card-metadata').forEach((mb) => {
+        cardMetadataEle.innerHTML += mb.innerHTML;
+      });
+    }
+    document.body.append(cardMetadataEle);
+  }
   document.body.prepend(mainEle);
   document.body.prepend(headerEle);
 }
@@ -332,6 +346,31 @@ function buildHtmlWithEditsAndAssets(assetReplacements) {
     mainEl.appendChild(divWrapper);
   }
 
+  const cardMetadataEditorDom = document.body.querySelector('main .stream-card-metadata-editor');
+  if (cardMetadataEditorDom) {
+    cachedCardMetadataHtml = cardMetadataEditorDom.innerHTML;
+    mainEl.querySelectorAll('div.card-metadata').forEach((el) => {
+      const parentSection = el.parentElement;
+      el.remove();
+      if (parentSection && parentSection.children.length === 0) parentSection.remove();
+    });
+    const cardBody = (cardMetadataEditorDom.innerHTML || '').trim();
+    if (cardBody) {
+      const cardMetadataDiv = document.createElement('div');
+      cardMetadataDiv.className = 'card-metadata';
+      cardMetadataDiv.innerHTML = cardMetadataEditorDom.innerHTML;
+      cardMetadataDiv.querySelectorAll('p').forEach((p) => {
+        [...p.attributes].forEach((attr) => p.removeAttribute(attr.name));
+      });
+      cardMetadataDiv.querySelectorAll('img').forEach((img) => {
+        img.setAttribute('src', img.getAttribute('data-stream-original-src'));
+      });
+      const cardWrapper = document.createElement('div');
+      cardWrapper.append(cardMetadataDiv);
+      mainEl.appendChild(cardWrapper);
+    }
+  }
+
   return { easyEdits, daCompatibleHtml: getDACompatibleHtml(mainEl.innerHTML) };
 }
 
@@ -523,6 +562,45 @@ export async function annotationOperation(options = {}) {
   metadataActions.append(addTextBtn, addImageBtn);
   metadataSeparator.append(metadataActions);
   mainEl.append(metadataSeparator);
+
+  if (window.streamConfig?.source === 'da') {
+    const cardMetadataDom = document.body.querySelector('.stream-card-metadata-editor');
+    if (cardMetadataDom) {
+      const cardMetadataSeparator = document.createElement('div');
+      cardMetadataSeparator.classList.add('section', 'stream-annotation-card-metadata');
+      cardMetadataSeparator.innerHTML = '<h3>Card (CaaS) metadata</h3>';
+      cardMetadataSeparator.append(cardMetadataDom);
+
+      const addAndRegisterCardRow = (row) => {
+        cardMetadataDom.append(row);
+        row.querySelectorAll('p').forEach((p) => inlineEditing.registerNewEditableElement(p));
+      };
+
+      const addCardTextBtn = document.createElement('button');
+      addCardTextBtn.className = 'stream-annotation-add-metadata-row';
+      addCardTextBtn.textContent = '+ Add text/link row';
+      addCardTextBtn.addEventListener('click', () => {
+        const row = document.createElement('div');
+        row.innerHTML = '<div><p>add metadata key</p></div><div><p>add text or link value</p></div>';
+        addAndRegisterCardRow(row);
+      });
+
+      const addCardImageBtn = document.createElement('button');
+      addCardImageBtn.className = 'stream-annotation-add-metadata-row';
+      addCardImageBtn.textContent = '+ Add image row';
+      addCardImageBtn.addEventListener('click', () => {
+        const row = document.createElement('div');
+        row.innerHTML = '<div><p>key</p></div><div><picture><img src="https://main--stream-mapper--adobecom.aem.live/assets/media_1bf6f8fe5a340bb3f4e022b300d7013821fe5ff89.png"></picture></div>';
+        addAndRegisterCardRow(row);
+      });
+
+      const cardMetadataActions = document.createElement('div');
+      cardMetadataActions.className = 'stream-annotation-metadata-actions';
+      cardMetadataActions.append(addCardTextBtn, addCardImageBtn);
+      cardMetadataSeparator.append(cardMetadataActions);
+      mainEl.append(cardMetadataSeparator);
+    }
+  }
 
   await finishAnnotationSession(mainEl, { preserveRemoteEditState, shouldRestoreInlineMode });
 }
