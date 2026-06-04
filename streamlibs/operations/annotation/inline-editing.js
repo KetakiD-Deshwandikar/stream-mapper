@@ -1,4 +1,5 @@
 import createAnnotationServiceClient from './service.js';
+import { isInsideManagedMetadataBlock } from './store.js';
 import { ANNOTATION_MESSAGES } from '../../utils/constants.js';
 import { showGlobalSnackbar } from '../../utils/snackbar.js';
 
@@ -113,6 +114,9 @@ export default function createInlineEditingController({
         if (!el.textContent || !el.textContent.trim()) return false;
         if (el.closest('.annotation-comments-panel') || el.closest('.annotation-floating-popup')) return false;
         if (isInsideStreamFragment(el)) return false;
+        // Managed metadata blocks are owned by the metadata-block recorder —
+        // skip text-edit registration to avoid double-recording the same change.
+        if (isInsideManagedMetadataBlock(el)) return false;
         return true;
       });
     const candidateSet = new Set(candidates);
@@ -138,6 +142,9 @@ export default function createInlineEditingController({
         if (!(el instanceof HTMLImageElement)) return false;
         if (el.closest('.annotation-comments-panel') || el.closest('.annotation-floating-popup')) return false;
         if (isInsideStreamFragment(el)) return false;
+        // Managed metadata blocks are owned by the metadata-block recorder —
+        // skip image-edit registration to avoid double-recording.
+        if (isInsideManagedMetadataBlock(el)) return false;
         return true;
       });
   }
@@ -294,12 +301,14 @@ export default function createInlineEditingController({
     for (let idx = 0; idx < candidateNodes.length; idx += 1) {
       const node = candidateNodes[idx];
       if (node instanceof HTMLImageElement) {
-        if (!isInsideStreamFragment(node)) return node;
+        if (!isInsideStreamFragment(node) && !isInsideManagedMetadataBlock(node)) return node;
       }
       if (node instanceof Element || node?.parentElement instanceof HTMLElement) {
         const element = node instanceof HTMLElement ? node : node?.parentElement;
         const img = element?.closest('img');
-        if (img instanceof HTMLImageElement && !isInsideStreamFragment(img)) return img;
+        if (img instanceof HTMLImageElement
+          && !isInsideStreamFragment(img)
+          && !isInsideManagedMetadataBlock(img)) return img;
       }
     }
     return null;
@@ -319,6 +328,7 @@ export default function createInlineEditingController({
   async function persistSingleImageAltChange(imageElement) {
     if (!(imageElement instanceof HTMLImageElement) || !annotationUI.mainEl) return;
     if (isInsideStreamFragment(imageElement)) return;
+    if (isInsideManagedMetadataBlock(imageElement)) return;
 
     const elementRef = store.ensureElementRef(imageElement);
     const editAnchor = store.buildEditElementAnchor(imageElement, annotationUI.mainEl);
@@ -367,6 +377,7 @@ export default function createInlineEditingController({
   function openInlineAltPopup(imageElement) {
     if (!(imageElement instanceof HTMLImageElement)) return;
     if (isInsideStreamFragment(imageElement)) return;
+    if (isInsideManagedMetadataBlock(imageElement)) return;
     closeInlineAltPopup();
 
     const popup = document.createElement('div');
@@ -681,6 +692,9 @@ export default function createInlineEditingController({
   function registerNewEditableElement(element) {
     if (!annotationUI.inlineMode || !annotationUI.mediumEditorInstance) return;
     if (!(element instanceof HTMLElement) || isInsideStreamFragment(element)) return;
+    // Managed metadata blocks have their own block-level recorder; never wire
+    // metadata descendants into the inline text-edit pipeline.
+    if (isInsideManagedMetadataBlock(element)) return;
     const elementRef = store.ensureElementRef(element);
     annotationUI.editableElements.push(element);
     annotationUI.inlineElementSnapshot.set(elementRef, {

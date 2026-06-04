@@ -387,21 +387,23 @@ export default async function initPreviewer() {
 }
 
 export async function persist(versionLabel = null) {
+  const isHostPageAnnotation = window.streamConfig?.operation === 'aiSeoAnnotation';
+  const mainEl = document.querySelector('main');
   try {
     notifyParentPreviewInteractive(false);
     updateLoader({ message: 'Pushing content to DA' });
-    hideDOMElements([document.querySelector('main')]);
+    if (!isHostPageAnnotation) hideDOMElements([mainEl]);
     if (isAnnotationOp()) {
       await persistAnnotationChangesToDA(versionLabel);
     } else {
       await persistOnTarget(versionLabel);
     }
     hideLoader();
-    showDOMElements([document.querySelector('main')]);
+    if (!isHostPageAnnotation) showDOMElements([mainEl]);
     notifyParentPushToDaResult(true);
   } catch (error) {
     hideLoader();
-    showDOMElements([document.querySelector('main')]);
+    if (!isHostPageAnnotation) showDOMElements([mainEl]);
     const detail = error?.message ? String(error.message) : '';
     notifyParentPushToDaResult(false, detail);
     handleError(error, 'persisting content');

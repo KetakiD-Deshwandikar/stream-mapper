@@ -105,6 +105,10 @@ function normalizeEditRecord(edit) {
     );
   }
 
+  const blockClass = `${edit?.blockClass || normalizedElementProps.blockClass || ''}`.trim();
+  const blockSelector = `${edit?.blockSelector || ''}`.trim()
+    || (blockClass ? `main .${blockClass}` : '');
+
   return {
     id: edit?.id || '',
     editType: edit?.editType || 'text',
@@ -112,6 +116,8 @@ function normalizeEditRecord(edit) {
     elementPath: `${edit?.elementPath || normalizedAnchor?.selector || ''}`,
     elementProps: normalizedElementProps,
     elementRef: edit?.elementRef || '',
+    blockClass,
+    blockSelector,
     from: `${edit?.from || ''}`,
     to: `${edit?.to || ''}`,
     fromHtml: `${edit?.fromHtml || ''}`,

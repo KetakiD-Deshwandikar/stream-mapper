@@ -18,6 +18,7 @@ import createInlineEditingController from './annotation/inline-editing.js';
 import createAnnotationServiceClient from './annotation/service.js';
 import createAssetServiceClient from './annotation/asset-service.js';
 import createAssetsPanelController from './annotation/assets-panel.js';
+import createMetadataPanelController from './annotation/metadata-panel.js';
 import requestParentCollabRefresh from './annotation/collab-sync.js';
 import { handleError } from '../utils/error-handler.js';
 
@@ -83,11 +84,14 @@ export async function recordImageRegenAsLocalAsset(imgEl, generatedUrl, pendingA
   await assetsPanel.registerLocalAssetFromRegen(imgEl, file, base64Data, pendingAlt, generatedUrl);
 }
 
+const metadataPanel = createMetadataPanelController({ store });
+
 const commentsPanel = createCommentsPanelController({
   annotationState,
   annotationUI,
   store,
   assetsPanel,
+  metadataPanel,
 });
 commentsPanel.setImageRegenHandler(recordImageRegenAsLocalAsset);
 
@@ -427,6 +431,9 @@ function buildHtmlWithEditsAndAssets(assetReplacements) {
     const metadataDiv = document.createElement('div');
     metadataDiv.className = 'metadata';
     metadataDiv.innerHTML = pageMetadataDom.innerHTML;
+    // Strip annotation-only UI chrome added by the metadata panel before
+    // pushing to DA (row delete buttons must never appear in DA HTML).
+    metadataDiv.querySelectorAll('.stream-annotation-metadata-row-delete').forEach((b) => b.remove());
     metadataDiv.querySelectorAll('p').forEach((p) => {
       [...p.attributes].forEach((attr) => p.removeAttribute(attr.name));
     });
@@ -598,40 +605,10 @@ export async function annotationOperation(options = {}) {
 
   await miloLoadArea();
 
-  const metadataDom = document.body.querySelector('.page-metadata');
-  const metadataSeparator = document.createElement('div');
-  metadataSeparator.classList.add('section', 'stream-annotation-page-metadata');
-  metadataSeparator.innerHTML = '<h3>Page Metadata</h3>';
-  metadataSeparator.append(metadataDom);
-
-  const addAndRegisterRow = (row) => {
-    metadataDom.append(row);
-    row.querySelectorAll('p').forEach((p) => inlineEditing.registerNewEditableElement(p));
-  };
-
-  const addTextBtn = document.createElement('button');
-  addTextBtn.className = 'stream-annotation-add-metadata-row';
-  addTextBtn.textContent = '+ Add text/link row';
-  addTextBtn.addEventListener('click', () => {
-    const row = document.createElement('div');
-    row.innerHTML = '<div><p>add metadata key</p></div><div><p>add text or link value</p></div>';
-    addAndRegisterRow(row);
+  metadataPanel.mountMetadataPanel(mainEl, {
+    blockClass: 'page-metadata',
+    title: 'Page Metadata',
   });
-
-  const addImageBtn = document.createElement('button');
-  addImageBtn.className = 'stream-annotation-add-metadata-row';
-  addImageBtn.textContent = '+ Add image row';
-  addImageBtn.addEventListener('click', () => {
-    const row = document.createElement('div');
-    row.innerHTML = '<div><p>key</p></div><div><picture><img src="https://main--stream-mapper--adobecom.aem.live/assets/media_1bf6f8fe5a340bb3f4e022b300d7013821fe5ff89.png"></picture></div>';
-    addAndRegisterRow(row);
-  });
-
-  const metadataActions = document.createElement('div');
-  metadataActions.className = 'stream-annotation-metadata-actions';
-  metadataActions.append(addTextBtn, addImageBtn);
-  metadataSeparator.append(metadataActions);
-  mainEl.append(metadataSeparator);
 
   await finishAnnotationSession(mainEl, { preserveRemoteEditState, shouldRestoreInlineMode });
 }
@@ -653,6 +630,7 @@ export async function annotationOperationOnHostPage(options = {}) {
   });
 
   const { shouldRestoreInlineMode } = prepareAnnotationSession({ preserveRemoteEditState });
+  document.body.classList.add('annotation-seo-mode');
 
   const mainEl = document.querySelector('main');
   if (!mainEl) throw new Error('annotationOperationOnHostPage: no <main> found on page');
@@ -671,6 +649,27 @@ export async function annotationOperationOnHostPage(options = {}) {
       cachedCleanHtml = baselineHtml || mainEl.innerHTML || '';
     }
   }
+
+  // SEO collab parity — the host page does not render `<div class="metadata">`
+  // blocks visually. Merge them out of cachedCleanHtml into a single
+  // `<div class="page-metadata">` and mount the metadata panel just like
+  // regular collab does. Baseline is captured inside mountMetadataPanel.
+  if (!document.body.querySelector('main .page-metadata') && cachedCleanHtml) {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `<main>${cachedCleanHtml}</main>`;
+    const mergedMetadata = document.createElement('div');
+    mergedMetadata.classList.add('page-metadata');
+    wrapper.querySelectorAll('div.metadata').forEach((mb) => {
+      mergedMetadata.innerHTML += mb.innerHTML;
+    });
+    if (mergedMetadata.children.length > 0) {
+      mainEl.append(mergedMetadata);
+    }
+  }
+  metadataPanel.mountMetadataPanel(mainEl, {
+    blockClass: 'page-metadata',
+    title: 'Page Metadata',
+  });
 
   await finishAnnotationSession(mainEl, { preserveRemoteEditState, shouldRestoreInlineMode });
 
@@ -734,12 +733,19 @@ export async function persistAnnotationChangesToDA(versionLabel = null) {
 }
 async function persistEditsToDb() {
   const savePayload = store.buildSavePayload();
-  const savedEditIds = savePayload.map((edit) => edit.id).filter(Boolean);
+
+  // Per senior's "On Save edit api will be called to pass last metadata edit":
+  // collapse in-session cumulative metadata-block edits per blockSelector so
+  // only the last (which already contains every row change) reaches the DB.
+  // Other edit types (text, image-src, image-alt) are preserved untouched.
+  const payloadEdits = store.collapseMetadataBlockEditsToLast(savePayload);
+  const savedEditIds = payloadEdits.map((edit) => edit.id).filter(Boolean);
 
   if (annotationService.isAvailable()) {
-    const persistedEditSnapshot = await annotationService.saveEdits(savePayload);
+    const persistedEditSnapshot = await annotationService.saveEdits(payloadEdits);
     if (persistedEditSnapshot) {
       store.clearChangeHistoryAfterSave(savedEditIds);
+      store.pruneSupersededMetadataBlockEdits();
       annotationState.latestSavedEditsUpdatedAt = persistedEditSnapshot.updatedAt
         || persistedEditSnapshot.createdAt
         || null;
@@ -767,6 +773,9 @@ export function applyRemoteCollabSnapshot(snapshot) {
 
 export function recordTextRegenAsEdit(element, fromText, toText, fromHtml = '') {
   if (!(element instanceof HTMLElement) || !annotationUI.mainEl) return;
+  // Managed metadata blocks are owned by the metadata-block recorder; text-regen
+  // inside metadata must not produce a separate `editType: 'text'` record.
+  if (element.closest('.page-metadata, .card-metadata')) return;
 
   const elementRef = store.ensureElementRef(element);
   const snapshot = annotationUI.inlineElementSnapshot.get(elementRef);

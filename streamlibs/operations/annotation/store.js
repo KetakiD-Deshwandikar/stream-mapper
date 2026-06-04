@@ -4,6 +4,30 @@ const ANNOTATION_STORE_KEY = 'stream-annotation-comments';
 export const DEFAULT_USERNAME = ANNOTATION_DEFAULT_USERNAME;
 export const COMMENT_STATUSES = ANNOTATION_COMMENT_STATUSES;
 
+// Metadata-block tracking is module-level so the "single source of truth"
+// (block-level recorder) can decide whether an element should be ignored by
+// the inline-text/image recorders. Baselines are captured once per session.
+const managedMetadataBlockSelectors = new Set();
+const metadataBaselineByBlockSelector = new Map();
+
+export function registerManagedMetadataBlock(blockSelector) {
+  const value = `${blockSelector || ''}`.trim();
+  if (value) managedMetadataBlockSelectors.add(value);
+}
+
+export function isInsideManagedMetadataBlock(element) {
+  if (!(element instanceof Element)) return false;
+  const selectors = Array.from(managedMetadataBlockSelectors);
+  return selectors.some((selector) => {
+    try {
+      return Boolean(element.closest(selector));
+    } catch (error) {
+      // Invalid selector — ignore.
+      return false;
+    }
+  });
+}
+
 export function normalizeCommentStatus(status) {
   const value = `${status || ''}`.trim();
   const normalized = value.toLowerCase();
@@ -169,7 +193,13 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
     const blockClass = `${edit.blockClass
       || normalizedElementProps.blockClass
       || parsedElementPath?.blockClass
-      || ''}`;
+      || ''}`.trim();
+    const blockSelector = (() => {
+      const explicit = `${edit.blockSelector || ''}`.trim();
+      if (explicit) return explicit;
+      if (blockClass) return `main .${blockClass}`;
+      return '';
+    })();
     const blockGlobalIndex = edit.blockGlobalIndex
       ?? normalizedElementProps.blockGlobalIndex
       ?? parsedElementPath?.blockGlobalIndex
@@ -197,6 +227,9 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
       blockGlobalIndex,
       picIndexInBlock,
       viewport,
+      // blockSelector is the unique CSS selector used by metadata-block edits to
+      // address the managed metadata container (e.g. 'main .page-metadata').
+      blockSelector,
       elementRef: edit.elementRef || '',
       from: `${edit.from || ''}`,
       to: `${edit.to || ''}`,
@@ -254,6 +287,11 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
   }
 
   function getEditPanelMessage(edit) {
+    if (edit.editType === 'metadata-block') {
+      // Block-level cumulative snapshot — label by readable block name.
+      const readableBlockName = `${edit.blockClass || ''}`.replace(/-/g, ' ').trim() || 'metadata';
+      return `updated ${readableBlockName}`;
+    }
     if (edit.editType === 'image-src') {
       const fromLabel = truncateInlineEditText(edit.from, 40);
       const toLabel = edit.to ? truncateInlineEditText(edit.to, 40) : 'pending upload';
@@ -322,6 +360,9 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
     return {
       id: normalizedEdit.id,
       threadType: 'edit',
+      editType: normalizedEdit.editType,
+      blockSelector: normalizedEdit.blockSelector || '',
+      blockClass: normalizedEdit.blockClass || '',
       elementRef: normalizedEdit.elementRef,
       elementPath: normalizedEdit.elementPath,
       elementProps: normalizedEdit.elementProps,
@@ -337,7 +378,14 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
         edit
         && typeof edit === 'object'
         && edit.editType !== 'image-src'
-        && (edit.from !== edit.to || (Array.isArray(edit.changeHistory) && edit.changeHistory.length > 0))
+        && (
+          edit.from !== edit.to
+          || (Array.isArray(edit.changeHistory) && edit.changeHistory.length > 0)
+          || (
+            edit.editType === 'metadata-block'
+            && (edit.fromHtml || '') !== (edit.toHtml || '')
+          )
+        )
       ))
       .map((edit) => buildEditThreadFromEasyEdit(edit));
     const preservedThreads = annotationState.store.threads.filter(
@@ -1489,7 +1537,41 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
       );
     }
 
+    const resolveMetadataBlockSelector = (edit) => {
+      const explicit = `${edit?.blockSelector || ''}`.trim();
+      if (explicit) return explicit;
+      const blockClass = `${edit?.blockClass || edit?.elementProps?.blockClass || ''}`.trim();
+      if (blockClass) return `main .${blockClass}`;
+      return '';
+    };
+
+    // Pass 1 — apply metadata-block edits first so subsequent edits don't get
+    // stomped by a later innerHTML overwrite, and so we collapse per block
+    // (only the last edit per blockSelector wins on apply).
+    const metadataLastByBlock = new Map();
+    annotationState.store.easyEdits.forEach((edit) => {
+      if (edit?.editType !== 'metadata-block') return;
+      const blockSelector = resolveMetadataBlockSelector(edit);
+      if (!blockSelector) return;
+      metadataLastByBlock.set(blockSelector, edit);
+    });
+    metadataLastByBlock.forEach((edit, blockSelector) => {
+      let blockEl = null;
+      try {
+        blockEl = document.querySelector(blockSelector);
+      } catch (error) {
+        blockEl = null;
+      }
+      if (!(blockEl instanceof HTMLElement)) return;
+      if (typeof edit.toHtml === 'string' && blockEl.innerHTML !== edit.toHtml) {
+        blockEl.innerHTML = edit.toHtml;
+      }
+    });
+
+    // Pass 2 — other edits (upstream image de-dupe + guards).
     keepLatestImageEdits(annotationState.store.easyEdits).forEach((edit) => {
+      if (edit?.editType === 'metadata-block') return;
+
       const target = getElementForEdit(edit);
       if (!(target instanceof HTMLElement)) return;
       if (target.closest('[data-class="fragment"]')) return;
@@ -1505,6 +1587,11 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
           fromHtml: edit.fromHtml || '',
         });
       }
+
+      // Edits whose target is inside a managed metadata block are owned by the
+      // metadata-block recorder; legacy text/image records inside metadata
+      // become inert to prevent double-apply fighting.
+      if (isInsideManagedMetadataBlock(target)) return;
 
       if (edit.editType === 'image-src') {
         const displayUrl = resolvedUrls.get(edit.to) || edit.to || '';
@@ -1542,6 +1629,133 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
         target.textContent = edit.to;
       }
     });
+  }
+
+  // ── Metadata-block helpers ────────────────────────────────────────────────
+
+  function captureMetadataBlockBaselineOnce(blockSelector, fromHtml) {
+    const key = `${blockSelector || ''}`.trim();
+    if (!key) return '';
+    if (!metadataBaselineByBlockSelector.has(key)) {
+      // Prefer baselines already encoded in saved edits (authoritative across
+      // reloads) over a live-DOM capture which may have been modified.
+      const savedEditWithBaseline = annotationState.store.easyEdits.find((edit) => (
+        edit?.editType === 'metadata-block'
+        && `${edit.blockSelector || ''}`.trim() === key
+        && typeof edit.fromHtml === 'string'
+        && edit.fromHtml.length > 0
+      ));
+      const baseline = savedEditWithBaseline
+        ? savedEditWithBaseline.fromHtml
+        : `${fromHtml || ''}`;
+      metadataBaselineByBlockSelector.set(key, baseline);
+    }
+    return metadataBaselineByBlockSelector.get(key) || '';
+  }
+
+  function getMetadataBlockBaseline(blockSelector) {
+    const key = `${blockSelector || ''}`.trim();
+    if (!key) return '';
+    return metadataBaselineByBlockSelector.get(key) || '';
+  }
+
+  function appendMetadataBlockEdit({
+    blockClass,
+    blockSelector,
+    fromHtml,
+    toHtml,
+  }) {
+    const key = `${blockSelector || ''}`.trim();
+    if (!key) return null;
+    // No-op if the cumulative snapshot didn't actually change.
+    const lastForBlock = [...annotationState.store.easyEdits]
+      .reverse()
+      .find((edit) => edit?.editType === 'metadata-block'
+        && `${edit.blockSelector || ''}`.trim() === key);
+    const previousToHtml = lastForBlock ? `${lastForBlock.toHtml || ''}` : '';
+    if (previousToHtml === `${toHtml || ''}`) return lastForBlock || null;
+
+    const normalizedEditRecord = normalizeEasyEdit({
+      editType: 'metadata-block',
+      blockClass: `${blockClass || ''}`,
+      blockSelector: key,
+      // Metadata-block edits never use elementPath/elementRef anchoring.
+      elementPath: '',
+      elementProps: {},
+      elementRef: '',
+      from: '',
+      to: '',
+      fromHtml: `${fromHtml || ''}`,
+      toHtml: `${toHtml || ''}`,
+      updatedAt: new Date().toISOString(),
+    });
+    annotationState.store.easyEdits.push(normalizedEditRecord);
+    rebuildEditThreadsFromEasyEdits();
+    return normalizedEditRecord;
+  }
+
+  function removeEasyEditById(editId) {
+    const id = `${editId || ''}`.trim();
+    if (!id) return null;
+    const index = annotationState.store.easyEdits.findIndex((edit) => edit?.id === id);
+    if (index === -1) return null;
+    const [removed] = annotationState.store.easyEdits.splice(index, 1);
+    rebuildEditThreadsFromEasyEdits();
+    return removed;
+  }
+
+  function getMetadataBlockEdits(blockSelector) {
+    const key = `${blockSelector || ''}`.trim();
+    return annotationState.store.easyEdits.filter((edit) => (
+      edit?.editType === 'metadata-block'
+      && (!key || `${edit.blockSelector || ''}`.trim() === key)
+    ));
+  }
+
+  function getLastMetadataBlockEdit(blockSelector) {
+    const edits = getMetadataBlockEdits(blockSelector);
+    return edits.length ? edits[edits.length - 1] : null;
+  }
+
+  // Pure helper — returns a NEW array where, for each managed metadata block,
+  // only the LAST metadata-block edit per blockSelector is kept. Other edit
+  // types are preserved untouched. Used when building the Save payload to
+  // honour "On Save edit api will be called to pass last metadata edit".
+  function collapseMetadataBlockEditsToLast(easyEdits = []) {
+    const list = Array.isArray(easyEdits) ? easyEdits : [];
+    const lastIndexByBlockSelector = new Map();
+    list.forEach((edit, index) => {
+      if (edit?.editType !== 'metadata-block') return;
+      const key = `${edit.blockSelector || ''}`.trim();
+      if (!key) return;
+      lastIndexByBlockSelector.set(key, index);
+    });
+    if (lastIndexByBlockSelector.size === 0) return list.slice();
+    return list.filter((edit, index) => {
+      if (edit?.editType !== 'metadata-block') return true;
+      const key = `${edit.blockSelector || ''}`.trim();
+      if (!key) return true;
+      return lastIndexByBlockSelector.get(key) === index;
+    });
+  }
+
+  function pruneSupersededMetadataBlockEdits() {
+    const lastByBlockSelector = new Map();
+    annotationState.store.easyEdits.forEach((edit) => {
+      if (edit?.editType !== 'metadata-block') return;
+      const key = `${edit.blockSelector || ''}`.trim();
+      if (!key) return;
+      lastByBlockSelector.set(key, edit);
+    });
+    if (lastByBlockSelector.size === 0) return;
+    annotationState.store.easyEdits = annotationState.store.easyEdits.filter((edit) => {
+      if (edit?.editType !== 'metadata-block') return true;
+      const key = `${edit.blockSelector || ''}`.trim();
+      if (!key) return true;
+      const lastEdit = lastByBlockSelector.get(key);
+      return lastEdit && lastEdit.id === edit.id;
+    });
+    rebuildEditThreadsFromEasyEdits();
   }
 
   return {
@@ -1595,5 +1809,13 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
     undoLastChange,
     clearChangeHistoryAfterSave,
     buildSavePayload,
+    appendMetadataBlockEdit,
+    captureMetadataBlockBaselineOnce,
+    collapseMetadataBlockEditsToLast,
+    getLastMetadataBlockEdit,
+    getMetadataBlockBaseline,
+    getMetadataBlockEdits,
+    removeEasyEditById,
+    pruneSupersededMetadataBlockEdits,
   };
 }

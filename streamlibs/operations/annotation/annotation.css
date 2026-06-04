@@ -2428,6 +2428,7 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     display: flex;
     width: 100%;
     box-sizing: border-box;
+    position: relative;
   }
 
   .annotation-mode .page-metadata > div > div:first-child {
@@ -2480,6 +2481,52 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
     display: none;
   }
 
+  .annotation-mode .stream-annotation-metadata-row-delete {
+    display: none;
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    line-height: 18px;
+    text-align: center;
+    border: 1px solid #fecaca;
+    border-radius: 50%;
+    background: #fff;
+    color: #dc2626;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .annotation-inline-edit-mode .stream-annotation-metadata-row-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .annotation-mode .stream-annotation-metadata-row-delete:hover {
+    background: #fef2f2;
+  }
+
+  .annotation-panel-metadata-discard-btn {
+    align-self: flex-end;
+    margin: 4px 8px 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #dc2626;
+    background: #fff;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .annotation-panel-metadata-discard-btn:hover {
+    background: #fef2f2;
+  }
+
   main > .section, .fragment > .section {
     min-height: 50px;
   }
@@ -2500,4 +2547,8 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
   .annotation-panel-edit-cancel-btn::after {
     display: none;
   }
+}
+
+body.annotation-seo-mode #loader-container {
+  z-index: 2147483647;
 }

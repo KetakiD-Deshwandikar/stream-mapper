@@ -40,7 +40,7 @@ export const CONFIG = {
   },
   dev: {
     streamMapper: {
-      serviceEP: 'https://adobe-acom-stream-service-deploy-ethos502-prod-or2-1de07c.cloud.adobe.io',
+      serviceEP: 'http://localhost:8082',
       figmaMappingUrl: '/api/fig-comps',
       figmaBlockContentUrl: '/api/fig-comp-details',
       pushToDaUrl: '/api/push-html',
@@ -54,7 +54,7 @@ export const CONFIG = {
   },
   dev02: {
     streamMapper: {
-      serviceEP: 'https://adobe-acom-stream-service-deploy-ethos501-prod-or2-b0c6b7.cloud.adobe.io',
+      serviceEP: 'http://localhost:8082',
       figmaMappingUrl: '/api/fig-comps',
       figmaBlockContentUrl: '/api/fig-comp-details',
       pushToDaUrl: '/api/push-html',

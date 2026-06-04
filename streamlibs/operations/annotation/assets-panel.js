@@ -845,6 +845,9 @@ export default function createAssetsPanelController({
 
   async function registerLocalAssetFromRegen(targetImg, file, base64Data, pendingAlt = '', generatedUrl = '') {
     if (!targetImg || !file || !base64Data) return null;
+    // Managed metadata blocks are owned by the metadata-block recorder; image
+    // regen inside metadata must not produce a separate image-alt/image-src edit.
+    if (targetImg.closest && targetImg.closest('.page-metadata, .card-metadata')) return null;
 
     const anchorTarget = targetImg.closest('picture') || targetImg;
     const { elementPath, elementProps } = store.buildEditElementAnchor(anchorTarget);

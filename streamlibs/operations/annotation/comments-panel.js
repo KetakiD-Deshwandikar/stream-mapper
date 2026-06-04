@@ -35,6 +35,7 @@ export default function createCommentsPanelController({
   annotationUI,
   store,
   assetsPanel,
+  metadataPanel,
 }) {
   const annotationService = createAnnotationServiceClient();
   const isInlineEditingAllowed = () => window.streamConfig?.inlineEditingAllowed !== false || window.streamConfig?.collabRole === 'owner';
@@ -1205,12 +1206,18 @@ export default function createCommentsPanelController({
         const canEditRootComment = isCommentThread
           && !isClosedThread
           && isCommentEditableByCurrentUser(thread, group.comment);
+        const isMetadataBlockEdit = !isCommentThread && thread.editType === 'metadata-block';
         const card = document.createElement('article');
         card.className = isCommentThread
           ? 'annotation-panel-comment annotation-panel-comment-item'
-          : 'annotation-panel-comment annotation-panel-edit-item';
+          : `annotation-panel-comment annotation-panel-edit-item${
+            isMetadataBlockEdit ? ' annotation-panel-edit-item-metadata' : ''}`;
         card.dataset.threadId = thread.id;
         card.dataset.messageId = group.comment.id || '';
+        if (isMetadataBlockEdit) {
+          card.dataset.metadataEditId = thread.id;
+          if (thread.blockSelector) card.dataset.blockSelector = thread.blockSelector;
+        }
         const isActiveMessage = Boolean(annotationState.activeMessageId)
           && group.comment.id === annotationState.activeMessageId;
         if (isActiveMessage
@@ -1365,6 +1372,9 @@ export default function createCommentsPanelController({
                 const json = await res.json();
                 const newText = json?.response?.text || json.text || json.content || json.result || '';
                 if (newText && targetEl.isConnected) {
+                  // Auto-apply inside a managed metadata block is owned by the
+                  // metadata-block recorder; skip the text-edit record.
+                  if (targetEl.closest('.page-metadata, .card-metadata')) return;
                   const fromText = targetEl.textContent.trim();
                   const fromHtml = targetEl.innerHTML;
                   targetEl.textContent = newText;
@@ -1480,6 +1490,25 @@ export default function createCommentsPanelController({
         }
 
         card.append(cardHeader);
+
+        // Discard renders only on the LAST metadata-block edit for this block
+        // (true stack/LIFO semantics). Each metadata-block edit's toHtml is a
+        // cumulative snapshot, so removing an older one would not undo only
+        // that change — it would surface a still-cumulative later snapshot.
+        if (isMetadataBlockEdit && thread.blockSelector) {
+          const lastEditForBlock = store.getLastMetadataBlockEdit(thread.blockSelector);
+          if (lastEditForBlock && lastEditForBlock.id === thread.id) {
+            const discardBtn = document.createElement('button');
+            discardBtn.type = 'button';
+            discardBtn.className = 'annotation-panel-metadata-discard-btn';
+            discardBtn.dataset.action = 'discard-metadata-edit';
+            discardBtn.dataset.metadataEditId = thread.id;
+            discardBtn.setAttribute('aria-label', 'Discard this metadata change');
+            discardBtn.title = 'Discard this metadata change';
+            discardBtn.textContent = 'Discard';
+            card.append(discardBtn);
+          }
+        }
 
         const rootCommentKey = `${thread.id}::${group.comment.id || ''}`;
         const isEditingRootComment = canEditRootComment
@@ -2488,11 +2517,38 @@ export default function createCommentsPanelController({
         return;
       }
 
+      const discardMetadataBtn = target.closest('.annotation-panel-metadata-discard-btn');
+      if (discardMetadataBtn instanceof HTMLButtonElement) {
+        const editId = discardMetadataBtn.dataset.metadataEditId;
+        if (editId && metadataPanel?.discardMetadataEdit) {
+          metadataPanel.discardMetadataEdit(editId);
+          renderThreadMarkers({ resolveTargets: true });
+          renderCommentsPanel();
+        }
+        return;
+      }
+
       if (card instanceof HTMLElement && card.classList.contains('annotation-panel-edit-item')) {
         const thread = store.getThreadById(card.dataset.threadId);
         if (!thread) return;
-        const targetEl = store.getElementForThread(thread);
-        if (targetEl) targetEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        // Metadata-block edits aren't anchored to a single element — scroll to
+        // the metadata block itself.
+        if (thread.editType === 'metadata-block') {
+          let blockEl = null;
+          try {
+            blockEl = thread.blockSelector
+              ? document.querySelector(thread.blockSelector)
+              : null;
+          } catch (error) {
+            blockEl = null;
+          }
+          if (blockEl instanceof HTMLElement) {
+            blockEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
+        } else {
+          const targetEl = store.getElementForThread(thread);
+          if (targetEl) targetEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
         annotationState.activeThreadId = thread.id;
         annotationState.activeMessageId = card.dataset.messageId || '';
         renderCommentsPanel();
