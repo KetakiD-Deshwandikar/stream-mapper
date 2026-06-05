@@ -19,6 +19,10 @@ import createAnnotationServiceClient from './annotation/service.js';
 import createAssetServiceClient from './annotation/asset-service.js';
 import createAssetsPanelController from './annotation/assets-panel.js';
 import createMetadataPanelController from './annotation/metadata-panel.js';
+import {
+  sanitizeMetadataInnerHtml,
+  sanitizeMetadataBlockHtml,
+} from './annotation/metadata-sanitize.js';
 import requestParentCollabRefresh from './annotation/collab-sync.js';
 import { handleError } from '../utils/error-handler.js';
 
@@ -430,16 +434,7 @@ function buildHtmlWithEditsAndAssets(assetReplacements) {
     });
     const metadataDiv = document.createElement('div');
     metadataDiv.className = 'metadata';
-    metadataDiv.innerHTML = pageMetadataDom.innerHTML;
-    // Strip annotation-only UI chrome added by the metadata panel before
-    // pushing to DA (row delete buttons must never appear in DA HTML).
-    metadataDiv.querySelectorAll('.stream-annotation-metadata-row-delete').forEach((b) => b.remove());
-    metadataDiv.querySelectorAll('p').forEach((p) => {
-      [...p.attributes].forEach((attr) => p.removeAttribute(attr.name));
-    });
-    metadataDiv.querySelectorAll('img').forEach((img) => {
-      img.setAttribute('src', img.getAttribute('data-stream-original-src'));
-    });
+    metadataDiv.innerHTML = sanitizeMetadataInnerHtml(pageMetadataDom.innerHTML);
     const divWrapper = document.createElement('div');
     divWrapper.append(metadataDiv);
     mainEl.appendChild(divWrapper);
@@ -731,6 +726,25 @@ export async function persistAnnotationChangesToDA(versionLabel = null) {
   // eslint-disable-next-line no-use-before-define
   await persistEditsToDb();
 }
+function refreshMetadataBlockEditsFromLiveDom() {
+  annotationState.store.easyEdits = annotationState.store.easyEdits.map((edit) => {
+    if (edit?.editType !== 'metadata-block') return edit;
+    const selector = `${edit.blockSelector || ''}`.trim();
+    if (!selector) return edit;
+    let blockEl = null;
+    try {
+      blockEl = document.querySelector(selector);
+    } catch {
+      blockEl = null;
+    }
+    if (!(blockEl instanceof HTMLElement)) return edit;
+    return {
+      ...edit,
+      toHtml: sanitizeMetadataBlockHtml(blockEl),
+    };
+  });
+}
+
 async function persistEditsToDb() {
   const savePayload = store.buildSavePayload();
 
@@ -738,7 +752,10 @@ async function persistEditsToDb() {
   // collapse in-session cumulative metadata-block edits per blockSelector so
   // only the last (which already contains every row change) reaches the DB.
   // Other edit types (text, image-src, image-alt) are preserved untouched.
-  const payloadEdits = store.collapseMetadataBlockEditsToLast(savePayload);
+  const payloadEdits = store.collapseMetadataBlockEditsToLast(savePayload).map((edit) => {
+    if (edit?.editType !== 'metadata-block' || typeof edit.toHtml !== 'string') return edit;
+    return { ...edit, toHtml: sanitizeMetadataInnerHtml(edit.toHtml) };
+  });
   const savedEditIds = payloadEdits.map((edit) => edit.id).filter(Boolean);
 
   if (annotationService.isAvailable()) {
@@ -762,6 +779,7 @@ export async function saveAnnotationChanges(reportProgress = () => {}) {
   await uploadAndDecideAssets();
   // Save assigns each image edit its content.da.live URL (no DA push here).
   buildAssetReplacementsAndEdits((asset) => asset.daUrl);
+  refreshMetadataBlockEditsFromLiveDom();
   await persistEditsToDb();
   reportProgress('editsSaved');
   requestParentCollabRefresh('edits-saved');

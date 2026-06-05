@@ -1,5 +1,6 @@
 /* eslint-disable no-restricted-syntax */
 import { registerManagedMetadataBlock } from './store.js';
+import { sanitizeMetadataBlockHtml } from './metadata-sanitize.js';
 
 /**
  *
@@ -92,12 +93,7 @@ export default function createMetadataPanelController({ store }) {
    * @returns {{ blockSelector: string, blockEl: HTMLElement } | null}
    */
   function getSanitizedBlockHtml(blockEl) {
-    // Strip annotation-only UI chrome (row delete buttons + contenteditable
-    // attrs) so the stored `toHtml` matches what we'd push to DA.
-    const clone = blockEl.cloneNode(true);
-    clone.querySelectorAll('.stream-annotation-metadata-row-delete').forEach((b) => b.remove());
-    clone.querySelectorAll('[contenteditable]').forEach((el) => el.removeAttribute('contenteditable'));
-    return clone.innerHTML;
+    return sanitizeMetadataBlockHtml(blockEl);
   }
 
   function tearDownPreviousMount(blockSelector) {
