@@ -2411,35 +2411,86 @@ body.editor-mode .figma-panel .has-block-action .block-action-btn.block-action-b
   
   .annotation-mode .stream-metadata-section > div {
     width: 100%;
-    border-collapse: collapse;
-    display: table;
+    display: flex;
+    flex-wrap: wrap;
     margin-top: 16px;
     font-size: 14px;
   }
 
   .annotation-mode .stream-metadata-section > div > div {
-    display: table-row;
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    position: relative;
   }
 
   .annotation-mode .stream-metadata-section > div > div > div {
-    display: table-cell;
-    border: 1px solid #d1d5db;
-    padding: 8px 16px;
-    vertical-align: top;
+    flex: 1 1 0;
+    min-width: 0;
+    border: 0.5px solid #cacaca;
+    padding: 10px;
+    padding-left: 20px;
   }
 
   .annotation-mode .stream-metadata-section > div > div > div:first-child {
-    font-weight: 600;
-    width: 30%;
-    background: #f8fafc;
-    color: #374151;
-    white-space: nowrap;
+    font-weight: bold;
   }
 
   .annotation-mode .stream-metadata-section > div > div > div img {
-    width: 50px;
+    width: 100px;
     height: auto;
-    max-width: 80px;
+    max-width: 100px;
+  }
+
+  .annotation-mode .stream-metadata-section .stream-annotation-metadata-actions {
+    display: none;
+    width: 80%;
+    flex-direction: row;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .annotation-inline-edit-mode .stream-metadata-section .stream-annotation-metadata-actions {
+    display: flex;
+  }
+
+  .annotation-mode .stream-annotation-add-metadata-row {
+    padding: 5px 14px;
+    background: #fff;
+    border: 1px solid #3d63ae;
+    border-radius: 4px;
+    color: #3d63ae;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .annotation-inline-edit-mode .stream-annotation-add-metadata-row:hover {
+    background: #3d63ae;
+    color: #fff;
+  }
+
+  .annotation-inline-edit-mode .stream-metadata-section .stream-annotation-delete-metadata-row {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    min-width: 22px;
+    height: 22px;
+    border: 1px solid #b3b3b3;
+    border-radius: 4px;
+    background: #fff;
+    color: #505050;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .annotation-mode:not(.annotation-inline-edit-mode) .stream-metadata-section .stream-annotation-delete-metadata-row {
+    display: none;
   }
 
 

@@ -107,6 +107,7 @@ function buildBlockToHtml(blockClass) {
   const liveBlock = document.querySelector(`main div.${blockClass}`);
   if (!liveBlock) return '';
   const clone = liveBlock.cloneNode(true);
+  clone.querySelectorAll('.stream-annotation-delete-metadata-row').forEach((el) => el.remove());
   clone.querySelectorAll('picture').forEach((picture) => {
     const img = picture.querySelector('img');
     if (img) picture.replaceWith(img);
@@ -124,6 +125,56 @@ function buildBlockToHtml(blockClass) {
   });
   return getDACompatibleHtml(clone.outerHTML);
 }
+const METADATA_USER_ROW_CLASS = 'stream-metadata-user-row';
+const METADATA_ROW_DELETE_BTN_CLASS = 'stream-annotation-delete-metadata-row';
+
+function removeUserMetadataRow(row) {
+  if (!(row instanceof HTMLElement) || !row.classList.contains(METADATA_USER_ROW_CLASS)) return;
+  const blockClass = isMetadata(row);
+  row.remove();
+  if (blockClass) {
+    // Refresh the block's edit(s) so the deletion is reflected in toHtml (display + push).
+    const toHtml = buildBlockToHtml(blockClass);
+    (annotationState.store.easyEdits || []).forEach((e) => {
+      if (e.blockClass === blockClass && e.toHtml) e.toHtml = toHtml;
+    });
+    store.saveAnnotationStore();
+  }
+  commentsPanel.renderThreadMarkers({ resolveTargets: true });
+}
+
+function ensureUserMetadataRowDeleteButton(row) {
+  if (!(row instanceof HTMLElement) || !row.classList.contains(METADATA_USER_ROW_CLASS)) return;
+  if (row.querySelector(`:scope > .${METADATA_ROW_DELETE_BTN_CLASS}`)) return;
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = METADATA_ROW_DELETE_BTN_CLASS;
+  deleteBtn.setAttribute('aria-label', 'Delete metadata row');
+  deleteBtn.textContent = '×';
+  deleteBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    removeUserMetadataRow(row);
+  });
+  row.append(deleteBtn);
+}
+
+// Re-attach delete controls after a block re-render (called via store callback).
+function decorateMetadataUserRows(block) {
+  if (!(block instanceof HTMLElement)) return;
+  block.querySelectorAll(`:scope > .${METADATA_USER_ROW_CLASS}`).forEach(ensureUserMetadataRowDeleteButton);
+}
+
+// On Save, user-added rows become permanent: drop the marker + delete control.
+function commitMetadataRows() {
+  if (!annotationUI.mainEl) return;
+  annotationUI.mainEl.querySelectorAll(`.stream-metadata-section .${METADATA_USER_ROW_CLASS}`).forEach((row) => {
+    row.querySelectorAll(`.${METADATA_ROW_DELETE_BTN_CLASS}`).forEach((b) => b.remove());
+    row.classList.remove(METADATA_USER_ROW_CLASS);
+  });
+}
+
+store.setOnMetadataBlockRendered(decorateMetadataUserRows);
 
 const inlineEditing = createInlineEditingController({
   annotationState,
@@ -473,6 +524,9 @@ function buildHtmlWithEditsAndAssets(assetReplacements) {
     if (finalHtml) mainEl.insertAdjacentHTML('beforeend', `<div>${finalHtml}</div>`);
   });
 
+  mainEl.querySelectorAll('.stream-metadata-user-row').forEach((el) => el.classList.remove('stream-metadata-user-row'));
+  mainEl.querySelectorAll('.stream-annotation-delete-metadata-row').forEach((el) => el.remove());
+
   return { easyEdits, daCompatibleHtml: getDACompatibleHtml(mainEl.innerHTML) };
 }
 
@@ -517,7 +571,6 @@ async function finishAnnotationSession(mainEl, {
     commentsPanel.renderThreadMarkers({ resolveTargets: true });
     commentsPanel.renderCommentsPanel();
   }
-  await store.applyEasyEditsToDom();
 
   for (const blockClass of cachedMetadataBlocks.keys()) {
     const divWrapper = document.createElement('div');
@@ -547,9 +600,46 @@ async function finishAnnotationSession(mainEl, {
     });
     // eslint-disable-next-line no-await-in-loop
     await Promise.all([...imgResolves, ...sourceResolves]);
-  }
 
-  if (cachedMetadataBlocks.size > 0) await store.applyEasyEditsToDom();
+    // Add-row controls — generalized for any BLOCK_CLASSES block (rows append to this
+    // block's live DOM; new <p> cells register as editable so edits persist via toHtml).
+    const blockEl = divWrapper.querySelector(`div.${blockClass}`);
+    if (blockEl) {
+      const addAndRegisterRow = (row) => {
+        row.classList.add(METADATA_USER_ROW_CLASS);
+        blockEl.append(row);
+        row.querySelectorAll('p').forEach((p) => inlineEditing.registerNewEditableElement(p));
+        ensureUserMetadataRowDeleteButton(row);
+        const toHtml = buildBlockToHtml(blockClass);
+        (annotationState.store.easyEdits || []).forEach((e) => {
+          if (e.blockClass === blockClass && e.toHtml) e.toHtml = toHtml;
+        });
+        store.saveAnnotationStore();
+      };
+      const addTextBtn = document.createElement('button');
+      addTextBtn.className = 'stream-annotation-add-metadata-row';
+      addTextBtn.textContent = '+ Add text/link row';
+      addTextBtn.addEventListener('click', () => {
+        const row = document.createElement('div');
+        row.innerHTML = '<div><p>add metadata key</p></div><div><p>add text or link value</p></div>';
+        addAndRegisterRow(row);
+      });
+      const addImageBtn = document.createElement('button');
+      addImageBtn.className = 'stream-annotation-add-metadata-row';
+      addImageBtn.textContent = '+ Add image row';
+      addImageBtn.addEventListener('click', () => {
+        const row = document.createElement('div');
+        row.innerHTML = '<div><p>key</p></div><div><picture><img src="https://main--stream-mapper--adobecom.aem.live/assets/media_1bf6f8fe5a340bb3f4e022b300d7013821fe5ff89.png"></picture></div>';
+        addAndRegisterRow(row);
+      });
+      const metadataActions = document.createElement('div');
+      metadataActions.className = 'stream-annotation-metadata-actions';
+      metadataActions.append(addTextBtn, addImageBtn);
+      divWrapper.append(metadataActions);
+    }
+  }
+  await store.applyEasyEditsToDom();
+
 }
 
 // ── Asset / edit processing (shared by persist and save) ──────────────────────
@@ -622,18 +712,23 @@ function buildAssetReplacementsAndEdits(resolveTargetUrl) {
     const existingEdit = store.getEasyEditByElement(
       asset.elementRef || '', asset.elementPath, asset.elementProps,
     );
+    // Keep the metadata classification even when the live ref didn't resolve (e.g. an added
+    // image row whose data-annotation-ref was stripped + <picture> flattened on re-render) —
+    // otherwise the edit downgrades to non-metadata and skips the metadata preview path → 401.
+    const effectiveBlockClass = blockClass || existingEdit?.blockClass || '';
     if (!existingEdit || existingEdit.editType === 'image-src') {
       store.upsertEasyEdit({
         ...(existingEdit || {}),
         editType: 'image-src',
         elementPath: asset.elementPath,
-        blockClass,
+        blockClass: effectiveBlockClass,
         elementProps: asset.elementProps || {},
         elementRef: asset.elementRef || '',
-        from: blockClass ? originalSrc : (existingEdit?.from || originalSrc),
+        from: effectiveBlockClass ? originalSrc : (existingEdit?.from || originalSrc),
         to: finalUrl,
-        fromHtml: blockClass ? (cachedMetadataBlocks.get(blockClass)?.outerHTML || '') : '',
-        toHtml: blockClass ? buildBlockToHtml(blockClass) : '',
+        fromHtml: effectiveBlockClass
+          ? (cachedMetadataBlocks.get(effectiveBlockClass)?.outerHTML || '') : '',
+        toHtml: effectiveBlockClass ? buildBlockToHtml(effectiveBlockClass) : '',
         // Keep the original replacement time so panel ordering stays chronological.
         updatedAt: existingEdit?.updatedAt || new Date().toISOString(),
       });
@@ -806,6 +901,8 @@ async function persistEditsToDb() {
 }
 
 export async function saveAnnotationChanges(reportProgress = () => {}) {
+  
+  commitMetadataRows();
   await inlineEditing.syncInlineEditsBeforePersist();
   await uploadAndDecideAssets();
   // Save assigns each image edit its content.da.live URL (no DA push here).

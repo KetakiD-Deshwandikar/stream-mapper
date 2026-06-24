@@ -30,6 +30,12 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
     previewUrlResolverFn = fn;
   }
 
+  let onMetadataBlockRenderedFn = null;
+
+  function setOnMetadataBlockRendered(fn) {
+    onMetadataBlockRenderedFn = fn;
+  }
+
   function generateId(prefix) {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -1335,7 +1341,7 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
   }
 
   function buildSavePayload() {
-    return annotationState.store.easyEdits
+    const edits = annotationState.store.easyEdits
       .filter((edit) => {
         if (!edit) return false;
         // Don't persist a pending asset edit that hasn't been assigned a URL yet.
@@ -1348,6 +1354,22 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
         const { changeHistory, assetFileKey, ...rest } = edit;
         return rest;
       });
+
+    const lastIdxByBlock = {};
+    edits.forEach((edit, i) => {
+      if (BLOCK_CLASSES.includes(edit.blockClass) && edit.toHtml) {
+        lastIdxByBlock[edit.blockClass] = i;
+      }
+    });
+    return edits.map((edit, i) => {
+      const isRedundantBlockCopy = BLOCK_CLASSES.includes(edit.blockClass)
+        && edit.toHtml && lastIdxByBlock[edit.blockClass] !== i;
+      if (isRedundantBlockCopy) {
+        const { toHtml, fromHtml, ...rest } = edit;
+        return rest;
+      }
+      return edit;
+    });
   }
 
   function replaceEasyEdits(nextEasyEdits = []) {
@@ -1509,19 +1531,32 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
           const tmp = document.createElement('div');
           tmp.innerHTML = edit.toHtml;
           const newBlock = tmp.querySelector(`div.${edit.blockClass}`) || tmp.firstElementChild;
-          if (newBlock && block.innerHTML !== newBlock.innerHTML) {
-            block.innerHTML = newBlock.innerHTML;
+          if (newBlock) {
+            const liveClone = block.cloneNode(true);
+            liveClone.querySelectorAll('img').forEach((img) => {
+              const orig = img.getAttribute('data-stream-original-src');
+              if (orig) img.setAttribute('src', orig);
+              [...img.attributes].filter((a) => a.name.startsWith('data-')).forEach((a) => img.removeAttribute(a.name));
+            });
+            if (liveClone.innerHTML !== newBlock.innerHTML) {
+              block.innerHTML = newBlock.innerHTML;
+            }
           }
-          // toHtml carries raw DA URLs; a bare <img> can't send the token (401), so resolve
-          // them to base64 here — runs on every re-render so the preview never reverts.
+          
           if (previewUrlResolverFn) {
             block.querySelectorAll('img').forEach((img) => {
               const src = img.getAttribute('src') || '';
+              if (src && !src.startsWith('data:') && !img.getAttribute('data-stream-original-src')) {
+                img.setAttribute('data-stream-original-src', src);
+              }
               previewUrlResolverFn(src).then((b64) => {
-                if (b64 && b64 !== src) img.setAttribute('src', b64);
+                if (b64 && b64 !== src && img.getAttribute('src') === src) {
+                  img.setAttribute('src', b64);
+                }
               });
             });
           }
+          if (onMetadataBlockRenderedFn) onMetadataBlockRenderedFn(block);
         }
         return;
       }
@@ -1582,6 +1617,7 @@ export function createAnnotationStore({ annotationState, annotationUI }) {
     applyEasyEditsToDom,
     applyEasyEditsToHtmlString,
     setPreviewUrlResolver,
+    setOnMetadataBlockRendered,
     buildElementPath,
     buildCommentElementPath,
     buildEditElementAnchor,
