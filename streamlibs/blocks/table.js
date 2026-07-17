@@ -11,9 +11,22 @@ function handleVariants(blockContent, properties) {
   if (properties?.bottomSpacer) handleSpacer(blockContent, properties.bottomSpacer.name, 'bottom');
 }
 
-function createHeaderColumn(columnHeading, offerCell, columnTemplate) {
+function createHeaderColumn(columnHeading, offerCell, productTileCell, columnTemplate) {
   const colEl = columnTemplate.cloneNode(true);
   colEl.innerHTML = '';
+
+  // Only render an icon when it resolved to a real URL. A bare Figma imageRef
+  // hash (unresolved, or vector icons that have no raster imageRef at all)
+  // must never become an <img src> — that produces a broken image.
+  const tileImage = productTileCell?.productTileImage;
+  if (typeof tileImage === 'string' && /^https?:\/\//.test(tileImage)) {
+    const iconP = document.createElement('p');
+    const img = document.createElement('img');
+    img.src = tileImage;
+    img.alt = columnHeading?.heading || '';
+    iconP.appendChild(img);
+    colEl.appendChild(iconP);
+  }
 
   if (columnHeading?.heading) {
     const headingP = document.createElement('p');
@@ -33,22 +46,27 @@ function createHeaderColumn(columnHeading, offerCell, columnTemplate) {
     colEl.appendChild(pricingP);
   }
 
+  if (offerCell?.detail) {
+    const detailP = document.createElement('p');
+    detailP.textContent = offerCell.detail;
+    colEl.appendChild(detailP);
+  }
+
   if (offerCell?.hasPriorPrice && offerCell?.priorPrice) {
     const priorPriceP = document.createElement('p');
     priorPriceP.innerHTML = `<s>${offerCell.priorPrice}</s>`;
     colEl.appendChild(priorPriceP);
   }
 
-  if (offerCell?.hasAction) {
-    const actionP = document.createElement('p');
-    actionP.innerHTML = `<em><a href="${DEFAULT_URL}">Free trial</a></em>`;
-    colEl.appendChild(actionP);
-  }
-
-  if (offerCell?.hasAction2) {
-    const action2P = document.createElement('p');
-    action2P.innerHTML = `<strong><a href="${DEFAULT_URL}">Buy now</a></strong>`;
-    colEl.appendChild(action2P);
+  if (offerCell?.hasAction || offerCell?.hasAction2) {
+    const ctaP = document.createElement('p');
+    if (offerCell?.hasAction) {
+      ctaP.innerHTML += `<em><a href="${DEFAULT_URL}">Free trial</a></em>`;
+    }
+    if (offerCell?.hasAction2) {
+      ctaP.innerHTML += `<strong><a href="${DEFAULT_URL}">Buy now</a></strong>`;
+    }
+    colEl.appendChild(ctaP);
   }
 
   return colEl;
@@ -83,6 +101,11 @@ function createDataCell(cell, cellTemplate) {
     case 'text':
     default:
       cellEl.textContent = cell.text || '';
+      if (cell.description) {
+        const descP = document.createElement('p');
+        descP.textContent = cell.description;
+        cellEl.appendChild(descP);
+      }
       break;
   }
 
@@ -97,8 +120,9 @@ function createDataRow(row, rowTemplate, cellTemplate) {
   const rowEl = rowTemplate.cloneNode(true);
   rowEl.innerHTML = '';
 
-  // Check if it's a section title row (has treeView or name contains "Title" and no cells)
-  const isSectionTitle = (row.treeView && row.treeView !== '')
+  // Check if it's a section title row — prefer explicit flag, fall back to heuristics
+  const isSectionTitle = row.isTitleRow
+    || (row.treeView && row.treeView !== '')
     || (row.name && row.name.includes('Title'))
     || (row.cells && row.cells.length === 0);
 
@@ -135,11 +159,12 @@ function buildHeaderRow(header, headerRowTemplate) {
   headerRow.innerHTML = '';
   headerRow.appendChild(emptyFirstCell.cloneNode(true));
 
-  const { columnHeadingCells = [], offerCells = [] } = header;
+  const { columnHeadingCells = [], offerCells = [], productTileCells = [] } = header;
 
   columnHeadingCells.forEach((columnHeading, index) => {
     const offerCell = offerCells[index] || {};
-    const colEl = createHeaderColumn(columnHeading, offerCell, columnTemplate);
+    const productTileCell = productTileCells[index] || {};
+    const colEl = createHeaderColumn(columnHeading, offerCell, productTileCell, columnTemplate);
     headerRow.appendChild(colEl);
   });
 
